@@ -1,7 +1,6 @@
-const express     = require('express');
-const cors        = require('cors');
-const fetch       = require('node-fetch');
+IN LOO
 const { createClient } = require('@supabase/supabase-js');
+const ws = require('ws');
 
 const app  = express();
 app.use(cors());
@@ -10,7 +9,8 @@ app.use(express.json());
 // ── Supabase ──────────────────────────────────────────────────────────────────
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_KEY,
+  { realtime: { transport: ws } }
 );
 
 // ── Health check ──────────────────────────────────────────────────────────────
