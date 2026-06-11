@@ -1,4 +1,6 @@
-IN LOO
+const express     = require('express');
+const cors        = require('cors');
+const fetch       = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
 
@@ -14,9 +16,9 @@ const supabase = createClient(
 );
 
 // ── Health check ──────────────────────────────────────────────────────────────
-app.get('/', (req, res) => res.json({ status: 'ok', app: 'نبضلی backend' }));
+app.get('/', (req, res) => res.json({ status: 'ok', app: 'nabzly backend' }));
 
-// ── مرحله ۱: تولید متن با Claude ─────────────────────────────────────────────
+// ── generate text ─────────────────────────────────────────────────────────────
 app.post('/api/generate-text', async (req, res) => {
   try {
     const { keyword, duration, voice } = req.body;
@@ -48,12 +50,12 @@ app.post('/api/generate-text', async (req, res) => {
   }
 });
 
-// ── مرحله ۲: تبدیل متن به صدا با ElevenLabs + آپلود در Supabase ─────────────
+// ── generate audio ────────────────────────────────────────────────────────────
 app.post('/api/generate-audio', async (req, res) => {
   try {
     const { text, voiceId, sessionId } = req.body;
 
-    // ۱. تولید صدا با ElevenLabs
+    // 1. generate audio with ElevenLabs
     const ttsResponse = await fetch(
       `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
       {
@@ -66,9 +68,9 @@ app.post('/api/generate-audio', async (req, res) => {
           text,
           model_id: 'eleven_multilingual_v2',
           voice_settings: {
-            stability:        0.75,
-            similarity_boost: 0.8,
-            style:            0.3,
+            stability:         0.75,
+            similarity_boost:  0.8,
+            style:             0.3,
             use_speaker_boost: true,
           },
         }),
@@ -76,26 +78,29 @@ app.post('/api/generate-audio', async (req, res) => {
     );
 
     if (!ttsResponse.ok) {
-      const err = await ttsResponse.text();
-      throw new Error(`ElevenLabs error: ${err}`);
+      const errText = await ttsResponse.text();
+      throw new Error(`ElevenLabs error: ${errText}`);
     }
 
-    // ۲. دریافت فایل صوتی
-    const audioBuffer = await ttsResponse.arrayBuffer();
-    const audioBytes  = new Uint8Array(audioBuffer);
+    // 2. get audio as buffer
+    const arrayBuffer = await ttsResponse.arrayBuffer();
+    const buffer      = Buffer.from(arrayBuffer);
 
-    // ۳. آپلود در Supabase Storage
-    const fileName = `${sessionId}_${Date.now()}.mp3`;
-    const { data: uploadData, error: uploadError } = await supabase.storage
-    .from('audio')
-     .upload(fileName, Buffer.from(audioBytes), {
-      contentType: 'audio/mpeg',
-    upsert: true,
-  });
+    // 3. upload to Supabase
+    const fileName = `${sessionId || Date.now()}.mp3`;
 
-    if (uploadError) throw new Error(`Supabase upload error: ${uploadError.message}`);
+    const { error: uploadError } = await supabase.storage
+      .from('audio')
+      .upload(fileName, buffer, {
+        contentType: 'audio/mpeg',
+        upsert:      true,
+      });
 
-    // ۴. دریافت URL عمومی
+    if (uploadError) {
+      throw new Error(`Supabase upload error: ${uploadError.message}`);
+    }
+
+    // 4. get public URL
     const { data: urlData } = supabase.storage
       .from('audio')
       .getPublicUrl(fileName);
@@ -108,8 +113,8 @@ app.post('/api/generate-audio', async (req, res) => {
   }
 });
 
-// ── شروع سرور ─────────────────────────────────────────────────────────────────
+// ── start server ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`نبضلی backend running on port ${PORT}`);
+  console.log(`nabzly backend running on port ${PORT}`);
 });
