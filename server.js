@@ -1,28 +1,18 @@
-const express     = require('express');
-const cors        = require('cors');
-const fetch       = require('node-fetch');
-const { createClient } = require('@supabase/supabase-js');
-const ws = require('ws');
+const express = require('express');
+const cors    = require('cors');
+const fetch   = require('node-fetch');
 
-const app  = express();
+const app = express();
 app.use(cors());
-app.use(express.json());
-
-// ── Supabase ──────────────────────────────────────────────────────────────────
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY,
-  { realtime: { transport: ws } }
-);
+app.use(express.json({ limit: '50mb' }));
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/', (req, res) => res.json({ status: 'ok', app: 'nabzly backend' }));
 
-// ── generate text ─────────────────────────────────────────────────────────────
+// ── Generate text with Claude ─────────────────────────────────────────────────
 app.post('/api/generate-text', async (req, res) => {
   try {
     const { keyword, duration, voice } = req.body;
-
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -39,23 +29,21 @@ app.post('/api/generate-text', async (req, res) => {
         }],
       }),
     });
-
     const data = await response.json();
     const text = data.content?.[0]?.text || 'چشمانت را ببند و نفس عمیقی بکش...';
     res.json({ text });
-
   } catch (err) {
-    console.error('Text generation error:', err);
+    console.error('Text error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── generate audio ────────────────────────────────────────────────────────────
+// ── Generate audio with ElevenLabs — return base64 ───────────────────────────
 app.post('/api/generate-audio', async (req, res) => {
   try {
-    const { text, voiceId, sessionId } = req.body;
+    const { text, voiceId } = req.body;
+    console.log('Generating audio for voiceId:', voiceId);
 
-    // 1. generate audio with ElevenLabs
     const ttsResponse = await fetch(
       `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
       {
@@ -77,44 +65,28 @@ app.post('/api/generate-audio', async (req, res) => {
       }
     );
 
+    console.log('ElevenLabs status:', ttsResponse.status);
+
     if (!ttsResponse.ok) {
       const errText = await ttsResponse.text();
-      throw new Error(`ElevenLabs error: ${errText}`);
+      console.error('ElevenLabs error:', errText);
+      return res.status(500).json({ error: `ElevenLabs: ${errText}` });
     }
 
-    // 2. get audio as buffer
     const arrayBuffer = await ttsResponse.arrayBuffer();
-    const buffer      = Buffer.from(arrayBuffer);
+    const base64      = Buffer.from(arrayBuffer).toString('base64');
+    const audioUrl    = `data:audio/mpeg;base64,${base64}`;
 
-    // 3. upload to Supabase
-    const fileName = `${sessionId || Date.now()}.mp3`;
-
-    const { error: uploadError } = await supabase.storage
-      .from('audio')
-      .upload(fileName, buffer, {
-        contentType: 'audio/mpeg',
-        upsert:      true,
-      });
-
-    if (uploadError) {
-       console.error('Upload error details:', JSON.stringify(uploadError));
-       throw new Error(`Supabase upload error: ${uploadError.message}`);
-}
-
-    // 4. get public URL
-    const { data: urlData } = supabase.storage
-      .from('audio')
-      .getPublicUrl(fileName);
-
-    res.json({ audioUrl: urlData.publicUrl });
+    console.log('Audio generated successfully, size:', base64.length);
+    res.json({ audioUrl });
 
   } catch (err) {
-    console.error('Audio generation error:', err);
+    console.error('Audio error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── start server ──────────────────────────────────────────────────────────────
+// ── Start server ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`nabzly backend running on port ${PORT}`);
