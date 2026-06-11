@@ -97,8 +97,9 @@ app.post('/api/generate-audio', async (req, res) => {
       });
 
     if (uploadError) {
-      throw new Error(`Supabase upload error: ${uploadError.message}`);
-    }
+       console.error('Upload error details:', JSON.stringify(uploadError));
+       throw new Error(`Supabase upload error: ${uploadError.message}`);
+}
 
     // 4. get public URL
     const { data: urlData } = supabase.storage
