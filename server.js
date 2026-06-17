@@ -55,11 +55,11 @@ app.post('/api/generate-audio', async (req, res) => {
           text,
           model_id: 'eleven_v3',
           voice_settings: {
-            stability:         0.85,
-            similarity_boost:  0.75,
-            style:             0.2,
-            use_speaker_boost: true,
-          },
+                  stability:         0.95,
+                  similarity_boost:  0.75,
+                  style:             0.05,
+                  use_speaker_boost: false,
+                },
         }),
       }
     );
