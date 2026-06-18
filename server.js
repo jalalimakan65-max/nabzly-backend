@@ -8,14 +8,13 @@ app.use(express.json({ limit: '50mb' }));
 
 app.get('/', (req, res) => res.json({ status: 'ok', app: 'nabzly backend' }));
 
-// تبدیل نقطه‌ها به مکث‌های طولانی
+// تبدیل نقطه‌ها به مکث SSML
 const addPauses = (text) => {
   return text
-    .replace(/……/g, ' <break time="2.5s"/> ')   // ۶ نقطه = ۲.۵ ثانیه مکث
-    .replace(/\.\.\.\.\.\./g, ' <break time="2.5s"/> ')
-    .replace(/\.\.\./g, ' <break time="1.5s"/> ')  // ۳ نقطه = ۱.۵ ثانیه
-    .replace(/
-/g, ' <break time="1s"/> ');        // خط جدید = ۱ ثانیه
+    .replace(/\u2026\u2026/g, ' <break time="2.5s"/> ')
+    .replace(/\.\.\.\.\.\./g,  ' <break time="2.5s"/> ')
+    .replace(/\.\.\./g,        ' <break time="1.5s"/> ')
+    .replace(/\n/g,            ' <break time="1s"/> ');
 };
 
 app.post('/api/generate-text', async (req, res) => {
@@ -23,35 +22,34 @@ app.post('/api/generate-text', async (req, res) => {
     const { keyword, duration, voice } = req.body;
     const dur = parseInt(duration) || 5;
 
-    // توکن کم + speed کم = زمان درست
-    let maxTokens = 150;   // 2 دقیقه
-    if (dur >= 5)  maxTokens = 250;   // 5 دقیقه
-    if (dur >= 10) maxTokens = 450;   // 10 دقیقه
-    if (dur >= 15) maxTokens = 650;   // 15 دقیقه
-
-    const durLabel = dur === 2  ? '۱ دقیقه و ۱۵ ثانیه'
-                   : dur === 5  ? '۲ دقیقه و ۴۰ ثانیه'
-                   : dur === 10 ? '۸ دقیقه'
-                   : '۱۲ دقیقه';
+    let maxTokens = 150;
+    if (dur >= 5)  maxTokens = 250;
+    if (dur >= 10) maxTokens = 450;
+    if (dur >= 15) maxTokens = 650;
 
     const ending = 'این مدیتیشن با یک زنگ ملایم به پایان می‌رسد...... اما می‌توانید به تمرکزتان ادامه دهید...... تا موزیک به آرامی تمام شود......';
 
-    const prompt = `یک متن مدیتیشن به فارسی معیار ایرانی بنویس.
-
-قوانین دستور زبانی:
-- دوم شخص مؤدبانه (شما): "نفس‌تان را حس کنید" / "چشمانتان را ببندید" / "بدنتان را رها کنید"
-- فعل آخر جمله
-
-قوانین محتوا:
-- فارسی ایرانی، بدون اصطلاح دینی
-- لحن گرم و آرام مثل مربی مدیتیشن
-- بعد از هر جمله "......" برای مکث طولانی
-- جملات کوتاه و ساده
-- اول: "آرام باشید......"
-- آخر حتماً: "${ending}"
-- موضوع: ${keyword}
-
-فقط متن، بدون توضیح.`;
+    const prompt = [
+      'یک متن مدیتیشن به فارسی معیار ایرانی بنویس.',
+      '',
+      'قوانین دستور زبانی:',
+      '- دوم شخص مودبانه (شما): "نفس‌تان را حس کنید" / "چشمانتان را ببندید" / "بدنتان را رها کنید"',
+      '- فعل آخر جمله',
+      '',
+      'قوانین محتوا:',
+      '- فارسی ایرانی، بدون اصطلاح دینی',
+      '- لحن گرم و آرام مثل مربی مدیتیشن',
+      '- بعد از هر جمله ...... برای مکث طولانی',
+      '- جملات کوتاه و ساده',
+      '- اول: "آرام باشید......"',
+      '- آخر حتما: ' + ending,
+      '- تکرار نکن',
+      '',
+      'موضوع: ' + keyword,
+      'مدت: ' + dur + ' دقیقه',
+      '',
+      'فقط متن، بدون توضیح.'
+    ].join('\n');
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -68,9 +66,8 @@ app.post('/api/generate-text', async (req, res) => {
     });
 
     const data = await response.json();
-    let text = data.content?.[0]?.text || 'آرام باشید...... چشمانتان را ببندید...... نفس عمیقی بکشید...... بدنتان را رها کنید......';
+    let text = data.content?.[0]?.text || 'آرام باشید...... چشمانتان را ببندید...... نفس عمیقی بکشید......';
 
-    // جمله پایانی را همیشه اضافه کن
     if (!text.includes('زنگ ملایم')) {
       text = text.trimEnd() + '\n' + ending;
     }
@@ -88,8 +85,10 @@ app.post('/api/generate-audio', async (req, res) => {
     const { text, voiceId } = req.body;
     console.log('Generating audio for voiceId:', voiceId);
 
+    const ssmlText = '<speak>' + addPauses(text) + '</speak>';
+
     const ttsResponse = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+      'https://api.elevenlabs.io/v1/text-to-speech/' + voiceId,
       {
         method: 'POST',
         headers: {
@@ -97,7 +96,7 @@ app.post('/api/generate-audio', async (req, res) => {
           'xi-api-key':   process.env.ELEVENLABS_KEY,
         },
         body: JSON.stringify({
-          text: '<speak>' + addPauses(text) + '</speak>',
+          text: ssmlText,
           model_id: 'eleven_v3',
           voice_settings: {
             stability:         0.95,
@@ -115,12 +114,12 @@ app.post('/api/generate-audio', async (req, res) => {
     if (!ttsResponse.ok) {
       const errText = await ttsResponse.text();
       console.error('ElevenLabs error:', errText);
-      return res.status(500).json({ error: `ElevenLabs: ${errText}` });
+      return res.status(500).json({ error: 'ElevenLabs: ' + errText });
     }
 
     const arrayBuffer = await ttsResponse.arrayBuffer();
     const base64      = Buffer.from(arrayBuffer).toString('base64');
-    const audioUrl    = `data:audio/mpeg;base64,${base64}`;
+    const audioUrl    = 'data:audio/mpeg;base64,' + base64;
 
     console.log('Audio generated successfully, size:', base64.length);
     res.json({ audioUrl });
@@ -133,5 +132,5 @@ app.post('/api/generate-audio', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`nabzly backend running on port ${PORT}`);
+  console.log('nabzly backend running on port ' + PORT);
 });
