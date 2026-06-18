@@ -18,58 +18,28 @@ const numToWord = (text) => {
   return text.replace(/[0-9۰-۹]/g, d => map[d] || d);
 };
 
+// مکث بیشتر بین جملات
 const addPauses = (text) => {
   return text
-    .replace(/\.\.\.\.\.\./g, ',,,')
-    .replace(/\.\.\./g, ',,')
-    .replace(/\n/g, ', ');
+    .replace(/\.\.\.\.\.\./g, ',,,,,')   // 6 نقطه = مکث خیلی طولانی
+    .replace(/\.\.\./g, ',,,')           // 3 نقطه = مکث طولانی
+    .replace(/\n/g, ',,');               // خط جدید = مکث متوسط
 };
 
-// بررسی و تکمیل جمله ناقص در انتها
-const completeLastSentence = async (text, anthropicKey) => {
-  // بررسی آیا آخرین جمله ناقص است
+// قطع کردن جمله ناقص در انتها
+const cutIncomplete = (text) => {
   const trimmed = text.trimEnd();
-  const lastChar = trimmed[trimmed.length - 1];
-  const completionChars = ['.', '!', '?', '،', '؟', '۔', '\u06D4'];
-  
-  // اگر آخرین کاراکتر پایان جمله نیست، جمله ناقص است
-  const isIncomplete = !completionChars.includes(lastChar) && 
-                       lastChar !== '.' && 
-                       !trimmed.endsWith('......') &&
-                       !trimmed.endsWith('...');
-
-  if (!isIncomplete) return text;
-
-  try {
-    // از Claude بخواه جمله را کامل کند — فقط ۱۰ توکن
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         anthropicKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model:      'claude-haiku-4-5',
-        max_tokens: 10,
-        messages: [
-          {
-            role: 'user',
-            content: 'این جمله فارسی را فقط با کلمات لازم تکمیل کن، بدون توضیح:\n' + trimmed
-          }
-        ],
-      }),
-    });
-    const data = await response.json();
-    const completion = data.content?.[0]?.text || '';
-    if (completion) {
-      console.log('Sentence completed:', completion);
-      return trimmed + completion;
-    }
-  } catch (e) {
-    console.log('Completion error:', e.message);
+  // پیدا کردن آخرین جمله کامل
+  const sentenceEnders = ['......', '...', '؟', '!', '?'];
+  let lastComplete = -1;
+  for (const ender of sentenceEnders) {
+    const idx = trimmed.lastIndexOf(ender);
+    if (idx > lastComplete) lastComplete = idx + ender.length;
   }
-  return text;
+  if (lastComplete > trimmed.length * 0.5) {
+    return trimmed.substring(0, lastComplete).trimEnd();
+  }
+  return trimmed;
 };
 
 app.post('/api/generate-text', async (req, res) => {
@@ -82,8 +52,6 @@ app.post('/api/generate-text', async (req, res) => {
     if (dur >= 10) maxTokens = 450;
     if (dur >= 15) maxTokens = 650;
 
-    const ending = 'این مدیتیشن با یک زنگ ملایم به پایان می‌رسد...... اما می‌توانید به تمرکزتان ادامه دهید...... تا موزیک به آرامی تمام شود......';
-
     const prompt = [
       'یک متن مدیتیشن راهنما به فارسی معیار ایرانی بنویس.',
       '',
@@ -94,12 +62,12 @@ app.post('/api/generate-text', async (req, res) => {
       '- دوم شخص مودبانه (شما)',
       '- فعل همیشه آخر جمله',
       '- هرگز از اعداد استفاده نکن',
-      '- هر جمله را کامل بنویس — جمله نیمه‌کاره قابل قبول نیست',
+      '- هر جمله را کامل بنویس',
       '',
       'قوانین محتوا:',
       '- فارسی ایرانی، بدون اصطلاح دینی',
       '- لحن گرم و آرام مثل مربی مدیتیشن',
-      '- بعد از هر جمله ...... برای مکث',
+      '- بعد از هر جمله ...... برای مکث طولانی',
       '- جملات کوتاه و قابل اجرا',
       '- اول: "آرام باشید......"',
       '- تکرار نکن',
@@ -107,7 +75,7 @@ app.post('/api/generate-text', async (req, res) => {
       'موضوع: ' + keyword,
       'مدت: ' + dur + ' دقیقه',
       '',
-      'فقط متن، بدون توضیح.'
+      'فقط متن اصلی مدیتیشن، بدون جمله پایانی، بدون توضیح.'
     ].join('\n');
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -130,15 +98,13 @@ app.post('/api/generate-text', async (req, res) => {
     // اعداد به کلمه
     text = numToWord(text);
 
-    // تکمیل جمله ناقص با ۱۰ توکن reserve
-    text = await completeLastSentence(text, process.env.ANTHROPIC_KEY);
+    // قطع جمله ناقص
+    text = cutIncomplete(text);
 
-    // جمله پایانی با ۱۵ خط فاصله
-    if (!text.includes('زنگ ملایم')) {
-      text = text.trimEnd() + '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n' + ending;
-    }
+    // جمله پایانی جداگانه — PlayerScreen بعد از موزیک پخش می‌کنه
+    const ending = 'این مدیتیشن با یک زنگ ملایم به پایان می‌رسد...... اما می‌توانید به تمرکزتان ادامه دهید...... تا موزیک به آرامی تمام شود......';
 
-    res.json({ text });
+    res.json({ text, ending });
 
   } catch (err) {
     console.error('Text error:', err.message);
@@ -148,10 +114,11 @@ app.post('/api/generate-text', async (req, res) => {
 
 app.post('/api/generate-audio', async (req, res) => {
   try {
-    const { text, voiceId } = req.body;
+    const { text, voiceId, speed } = req.body;
     console.log('Generating audio for voiceId:', voiceId);
 
     const processedText = addPauses(numToWord(text));
+    const voiceSpeed = speed || 0.6;
 
     const ttsResponse = await fetch(
       'https://api.elevenlabs.io/v1/text-to-speech/' + voiceId,
@@ -169,7 +136,7 @@ app.post('/api/generate-audio', async (req, res) => {
             similarity_boost:  0.75,
             style:             0.05,
             use_speaker_boost: false,
-            speed:             0.6,
+            speed:             voiceSpeed,
           },
         }),
       }
