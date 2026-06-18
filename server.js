@@ -8,13 +8,23 @@ app.use(express.json({ limit: '50mb' }));
 
 app.get('/', (req, res) => res.json({ status: 'ok', app: 'nabzly backend' }));
 
-// تبدیل نقطه‌ها به مکث SSML
+// تبدیل اعداد به کلمه فارسی
+const numToWord = (text) => {
+  const map = {
+    '0':'صفر','1':'یک','2':'دو','3':'سه','4':'چهار',
+    '5':'پنج','6':'شش','7':'هفت','8':'هشت','9':'نه',
+    '۰':'صفر','۱':'یک','۲':'دو','۳':'سه','۴':'چهار',
+    '۵':'پنج','۶':'شش','۷':'هفت','۸':'هشت','۹':'نه',
+  };
+  return text.replace(/[0-9۰-۹]/g, d => map[d] || d);
+};
+
+// تبدیل نقطه‌ها به مکث — فقط با کاما که ElevenLabs بهتر درک می‌کنه
 const addPauses = (text) => {
   return text
-    .replace(/\u2026\u2026/g, ' <break time="2.5s"/> ')
-    .replace(/\.\.\.\.\.\./g,  ' <break time="2.5s"/> ')
-    .replace(/\.\.\./g,        ' <break time="1.5s"/> ')
-    .replace(/\n/g,            ' <break time="1s"/> ');
+    .replace(/\.\.\.\.\.\./g, ',,,')
+    .replace(/\.\.\./g, ',,')
+    .replace(/\n/g, ', ');
 };
 
 app.post('/api/generate-text', async (req, res) => {
@@ -33,8 +43,9 @@ app.post('/api/generate-text', async (req, res) => {
       'یک متن مدیتیشن به فارسی معیار ایرانی بنویس.',
       '',
       'قوانین دستور زبانی:',
-      '- دوم شخص مودبانه (شما): "نفس‌تان را حس کنید" / "چشمانتان را ببندید" / "بدنتان را رها کنید"',
+      '- دوم شخص مودبانه (شما): "نفس‌تان را حس کنید" / "چشمانتان را ببندید"',
       '- فعل آخر جمله',
+      '- هرگز از اعداد استفاده نکن، همه را به حروف بنویس',
       '',
       'قوانین محتوا:',
       '- فارسی ایرانی، بدون اصطلاح دینی',
@@ -42,7 +53,7 @@ app.post('/api/generate-text', async (req, res) => {
       '- بعد از هر جمله ...... برای مکث طولانی',
       '- جملات کوتاه و ساده',
       '- اول: "آرام باشید......"',
-      '- آخر حتما: ' + ending,
+      '- در پایان متن اصلی یک خط خالی بگذار سپس بنویس: ' + ending,
       '- تکرار نکن',
       '',
       'موضوع: ' + keyword,
@@ -68,8 +79,12 @@ app.post('/api/generate-text', async (req, res) => {
     const data = await response.json();
     let text = data.content?.[0]?.text || 'آرام باشید...... چشمانتان را ببندید...... نفس عمیقی بکشید......';
 
+    // اعداد را به کلمه تبدیل کن
+    text = numToWord(text);
+
+    // جمله پایانی را با فاصله ۱۵ ثانیه اضافه کن
     if (!text.includes('زنگ ملایم')) {
-      text = text.trimEnd() + '\n' + ending;
+      text = text.trimEnd() + '\n\n\n\n\n' + ending;
     }
 
     res.json({ text });
@@ -85,7 +100,8 @@ app.post('/api/generate-audio', async (req, res) => {
     const { text, voiceId } = req.body;
     console.log('Generating audio for voiceId:', voiceId);
 
-    const ssmlText = '<speak>' + addPauses(text) + '</speak>';
+    // اعداد را به کلمه تبدیل کن و مکث‌ها را اضافه کن
+    const processedText = addPauses(numToWord(text));
 
     const ttsResponse = await fetch(
       'https://api.elevenlabs.io/v1/text-to-speech/' + voiceId,
@@ -96,7 +112,7 @@ app.post('/api/generate-audio', async (req, res) => {
           'xi-api-key':   process.env.ELEVENLABS_KEY,
         },
         body: JSON.stringify({
-          text: ssmlText,
+          text: processedText,
           model_id: 'eleven_v3',
           voice_settings: {
             stability:         0.95,
