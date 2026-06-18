@@ -8,7 +8,6 @@ app.use(express.json({ limit: '50mb' }));
 
 app.get('/', (req, res) => res.json({ status: 'ok', app: 'nabzly backend' }));
 
-// تبدیل اعداد به کلمه فارسی
 const numToWord = (text) => {
   const map = {
     '0':'صفر','1':'یک','2':'دو','3':'سه','4':'چهار',
@@ -19,12 +18,58 @@ const numToWord = (text) => {
   return text.replace(/[0-9۰-۹]/g, d => map[d] || d);
 };
 
-// تبدیل نقطه‌ها به مکث — فقط با کاما که ElevenLabs بهتر درک می‌کنه
 const addPauses = (text) => {
   return text
     .replace(/\.\.\.\.\.\./g, ',,,')
     .replace(/\.\.\./g, ',,')
     .replace(/\n/g, ', ');
+};
+
+// بررسی و تکمیل جمله ناقص در انتها
+const completeLastSentence = async (text, anthropicKey) => {
+  // بررسی آیا آخرین جمله ناقص است
+  const trimmed = text.trimEnd();
+  const lastChar = trimmed[trimmed.length - 1];
+  const completionChars = ['.', '!', '?', '،', '؟', '۔', '\u06D4'];
+  
+  // اگر آخرین کاراکتر پایان جمله نیست، جمله ناقص است
+  const isIncomplete = !completionChars.includes(lastChar) && 
+                       lastChar !== '.' && 
+                       !trimmed.endsWith('......') &&
+                       !trimmed.endsWith('...');
+
+  if (!isIncomplete) return text;
+
+  try {
+    // از Claude بخواه جمله را کامل کند — فقط ۱۰ توکن
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type':      'application/json',
+        'x-api-key':         anthropicKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model:      'claude-haiku-4-5',
+        max_tokens: 10,
+        messages: [
+          {
+            role: 'user',
+            content: 'این جمله فارسی را فقط با کلمات لازم تکمیل کن، بدون توضیح:\n' + trimmed
+          }
+        ],
+      }),
+    });
+    const data = await response.json();
+    const completion = data.content?.[0]?.text || '';
+    if (completion) {
+      console.log('Sentence completed:', completion);
+      return trimmed + completion;
+    }
+  } catch (e) {
+    console.log('Completion error:', e.message);
+  }
+  return text;
 };
 
 app.post('/api/generate-text', async (req, res) => {
@@ -40,20 +85,23 @@ app.post('/api/generate-text', async (req, res) => {
     const ending = 'این مدیتیشن با یک زنگ ملایم به پایان می‌رسد...... اما می‌توانید به تمرکزتان ادامه دهید...... تا موزیک به آرامی تمام شود......';
 
     const prompt = [
-      'یک متن مدیتیشن به فارسی معیار ایرانی بنویس.',
+      'یک متن مدیتیشن راهنما به فارسی معیار ایرانی بنویس.',
       '',
       'قوانین دستور زبانی:',
-      '- دوم شخص مودبانه (شما): "نفس‌تان را حس کنید" / "چشمانتان را ببندید"',
-      '- فعل آخر جمله',
-      '- هرگز از اعداد استفاده نکن، همه را به حروف بنویس',
+      '- جملات دستوری و هدایتگر، نه توصیفی',
+      '- غلط: "هوا از بینی‌تان درون می‌رود"',
+      '- درست: "هوا را به آرامی از طریق بینی به داخل ریه‌هایتان بکشید"',
+      '- دوم شخص مودبانه (شما)',
+      '- فعل همیشه آخر جمله',
+      '- هرگز از اعداد استفاده نکن',
+      '- هر جمله را کامل بنویس — جمله نیمه‌کاره قابل قبول نیست',
       '',
       'قوانین محتوا:',
       '- فارسی ایرانی، بدون اصطلاح دینی',
       '- لحن گرم و آرام مثل مربی مدیتیشن',
-      '- بعد از هر جمله ...... برای مکث طولانی',
-      '- جملات کوتاه و ساده',
+      '- بعد از هر جمله ...... برای مکث',
+      '- جملات کوتاه و قابل اجرا',
       '- اول: "آرام باشید......"',
-      '- در پایان متن اصلی یک خط خالی بگذار سپس بنویس: ' + ending,
       '- تکرار نکن',
       '',
       'موضوع: ' + keyword,
@@ -79,12 +127,15 @@ app.post('/api/generate-text', async (req, res) => {
     const data = await response.json();
     let text = data.content?.[0]?.text || 'آرام باشید...... چشمانتان را ببندید...... نفس عمیقی بکشید......';
 
-    // اعداد را به کلمه تبدیل کن
+    // اعداد به کلمه
     text = numToWord(text);
 
-    // جمله پایانی را با فاصله ۱۵ ثانیه اضافه کن
+    // تکمیل جمله ناقص با ۱۰ توکن reserve
+    text = await completeLastSentence(text, process.env.ANTHROPIC_KEY);
+
+    // جمله پایانی با ۱۵ خط فاصله
     if (!text.includes('زنگ ملایم')) {
-      text = text.trimEnd() + '\n\n\n\n\n' + ending;
+      text = text.trimEnd() + '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n' + ending;
     }
 
     res.json({ text });
@@ -100,7 +151,6 @@ app.post('/api/generate-audio', async (req, res) => {
     const { text, voiceId } = req.body;
     console.log('Generating audio for voiceId:', voiceId);
 
-    // اعداد را به کلمه تبدیل کن و مکث‌ها را اضافه کن
     const processedText = addPauses(numToWord(text));
 
     const ttsResponse = await fetch(
